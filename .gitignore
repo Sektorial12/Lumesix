@@ -54,3 +54,8 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# MongoDB
+lumesix-backend/mongodb-guide.md
+lumesix-backend/view-db.js
+lumesix-backend/test-revenuecat.md
