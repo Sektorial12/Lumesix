@@ -3,7 +3,7 @@
  * Simplified navigation that works without gesture handler
  */
 
-import React, {useState} from 'react';
+import React, {useState, useEffect} from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -14,9 +14,15 @@ import {
   TouchableOpacity,
   RefreshControl,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 
-// Simple tab navigation component
+
+import { revenueCatService } from './src/services/revenuecat';
+import { RevenueCatStatus } from './src/components/RevenueCatStatus';
+import { apiService } from './src/services/api';
+import AuthWrapper from './src/components/AuthWrapper';
+
 const TabButton = ({title, isActive, onPress}: {title: string; isActive: boolean; onPress: () => void}) => (
   <TouchableOpacity
     style={[styles.tabButton, isActive && styles.tabButtonActive]}
@@ -27,18 +33,31 @@ const TabButton = ({title, isActive, onPress}: {title: string; isActive: boolean
   </TouchableOpacity>
 );
 
-// Dashboard Screen Component
 const DashboardScreen = ({onNavigateToInsights}: {onNavigateToInsights: () => void}) => {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(new Date());
+  const [dashboardData, setDashboardData] = useState<any>(null);
+  const [isRevenueCatConnected, setIsRevenueCatConnected] = useState(false);
 
-  const onRefresh = () => {
+  const loadDashboardData = async () => {
+    try {
+      const data = await apiService.getDashboardData();
+      setDashboardData(data);
+      setIsRevenueCatConnected(revenueCatService.isSDKReady());
+      setLastUpdated(new Date(data.lastUpdated));
+    } catch (error) {
+      console.error('Failed to load dashboard data:', error);
+    }
+  };
+
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
+  const onRefresh = async () => {
     setRefreshing(true);
-    // Simulate API call
-    setTimeout(() => {
-      setLastUpdated(new Date());
-      setRefreshing(false);
-    }, 1500);
+    await loadDashboardData();
+    setRefreshing(false);
   };
 
   return (
@@ -52,21 +71,27 @@ const DashboardScreen = ({onNavigateToInsights}: {onNavigateToInsights: () => vo
         <Text style={styles.screenSubtitle}>Revenue & Subscription Analytics</Text>
       </View>
 
+      <RevenueCatStatus 
+        isConnected={isRevenueCatConnected}
+        lastUpdated={lastUpdated.toISOString()}
+        onRefresh={onRefresh}
+      />
+
       <View style={styles.metricsContainer}>
         <TouchableOpacity 
           style={[styles.metricCard, styles.primaryCard]}
-          onPress={() => Alert.alert('MRR Details', '$14,560 (+12.3% from last month)')}>
+          onPress={() => Alert.alert('MRR Details', `$${dashboardData?.mrr?.toLocaleString() || '14,560'} (+12.3% from last month)\n\nData Source: ${isRevenueCatConnected ? 'RevenueCat Live' : 'Demo Mode'}`)}>
           <Text style={styles.metricLabel}>Monthly Recurring Revenue</Text>
-          <Text style={styles.metricValue}>$14,560</Text>
+          <Text style={styles.metricValue}>${dashboardData?.mrr?.toLocaleString() || '14,560'}</Text>
           <Text style={styles.metricChange}>+12.3% from last month</Text>
         </TouchableOpacity>
 
         <View style={styles.metricsRow}>
           <TouchableOpacity 
             style={[styles.metricCard, styles.secondaryCard]}
-            onPress={() => Alert.alert('Subscribers', '1,456 active (+5.2% growth)')}>
+            onPress={() => Alert.alert('Subscribers', `${dashboardData?.activeSubscribers?.toLocaleString() || '1,456'} active (+5.2% growth)\n\nData Source: ${isRevenueCatConnected ? 'RevenueCat Live' : 'Demo Mode'}`)}>
             <Text style={styles.metricLabelSecondary}>Active Subscribers</Text>
-            <Text style={styles.metricValueSecondary}>1,456</Text>
+            <Text style={styles.metricValueSecondary}>{dashboardData?.activeSubscribers?.toLocaleString() || '1,456'}</Text>
             <Text style={styles.metricChangePositive}>+5.2%</Text>
           </TouchableOpacity>
 
@@ -107,10 +132,77 @@ const DashboardScreen = ({onNavigateToInsights}: {onNavigateToInsights: () => vo
   );
 };
 
-// AI Insights Screen Component
 const InsightsScreen = () => {
   const [selectedInsight, setSelectedInsight] = useState<string | null>(null);
   const [showRecommendation, setShowRecommendation] = useState<{[key: string]: boolean}>({});
+  const [insights, setInsights] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadInsights = async () => {
+    try {
+      const businessInsights = await apiService.getBusinessInsights();
+      const dashboardData = await apiService.getAIInsightsDashboard();
+      
+      const combinedInsights = [
+        ...businessInsights.map((insight: any) => ({
+          id: insight.id || `insight-${Date.now()}-${Math.random()}`,
+          type: insight.type,
+          title: insight.title,
+          description: insight.description,
+          impact: insight.priority || 'medium',
+          confidence: insight.confidence || 75,
+          recommendation: insight.actionItems?.join(' ') || insight.description
+        }))
+      ];
+      
+      setInsights(combinedInsights);
+    } catch (error) {
+      console.error('Failed to load AI insights:', error);
+      setInsights([
+        {
+          id: 'demo-churn',
+          type: 'churn',
+          title: 'Connect RevenueCat for Real Insights',
+          description: 'Connect your RevenueCat account to get AI-powered churn predictions, revenue optimization, and customer analytics.',
+          impact: 'high',
+          confidence: 100,
+          recommendation: 'Go to Settings → Connect RevenueCat to unlock personalized AI insights from your subscription data.'
+        }
+      ]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadInsights();
+  }, []);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadInsights();
+  };
+
+  const getImpactColor = (impact: string) => {
+    switch (impact?.toLowerCase()) {
+      case 'high': return '#FF3B30';
+      case 'medium': return '#FF9500';
+      case 'low': return '#34C759';
+      default: return '#007AFF';
+    }
+  };
+
+  const getImpactIcon = (type: string) => {
+    switch (type?.toLowerCase()) {
+      case 'churn': return '⚠️';
+      case 'revenue': return '💰';
+      case 'retention': return '🔄';
+      case 'growth': return '📈';
+      default: return '🤖';
+    }
+  };
 
   const toggleRecommendation = (insightId: string) => {
     setShowRecommendation(prev => ({
@@ -119,109 +211,95 @@ const InsightsScreen = () => {
     }));
   };
 
+  if (loading) {
+    return (
+      <View style={[styles.screenContainer, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={{ color: '#666666', marginTop: 16, fontSize: 16 }}>Loading AI insights...</Text>
+      </View>
+    );
+  }
+
   return (
-    <ScrollView style={styles.screenContainer}>
+    <ScrollView 
+      style={styles.screenContainer}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+      }
+    >
       <View style={styles.header}>
         <Text style={styles.screenTitle}>AI Insights</Text>
         <Text style={styles.screenSubtitle}>Powered by machine learning</Text>
       </View>
 
       <View style={styles.insightsContainer}>
-        <TouchableOpacity 
-          style={[styles.insightCard, selectedInsight === 'churn' && styles.selectedCard]}
-          onPress={() => setSelectedInsight(selectedInsight === 'churn' ? null : 'churn')}>
-          <View style={styles.insightHeader}>
-            <Text style={styles.insightIcon}>⚠️</Text>
-            <Text style={styles.insightTitle}>High Churn Risk Detected</Text>
-            <View style={[styles.impactBadge, {backgroundColor: '#FF3B30'}]}>
-              <Text style={styles.impactText}>HIGH</Text>
-            </View>
+        {insights.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateTitle}>🤖 No insights available</Text>
+            <Text style={styles.emptyStateText}>
+              Connect your RevenueCat account to get AI-powered insights from your subscription data.
+            </Text>
           </View>
-          <Text style={styles.insightDescription}>
-            23 subscribers show patterns indicating 85% churn probability in the next 7 days
-          </Text>
-          <View style={styles.confidenceContainer}>
-            <Text style={styles.confidenceLabel}>Confidence:</Text>
-            <View style={styles.confidenceBar}>
-              <View style={[styles.confidenceFill, {width: '85%', backgroundColor: '#34C759'}]} />
-            </View>
-            <Text style={styles.confidenceText}>85%</Text>
-          </View>
-          {selectedInsight === 'churn' && (
-            <View style={styles.expandedContent}>
-              <Text style={styles.expandedTitle}>📊 Detailed Analysis:</Text>
-              <Text style={styles.expandedText}>• 15 users haven't opened app in 7+ days</Text>
-              <Text style={styles.expandedText}>• 8 users reduced usage by 60%</Text>
-              <Text style={styles.expandedText}>• Peak risk period: Next 3-7 days</Text>
-              <TouchableOpacity 
-                style={styles.actionButton}
-                onPress={() => toggleRecommendation('churn')}>
-                <Text style={styles.actionButtonText}>
-                  {showRecommendation.churn ? 'Hide' : 'Show'} Recommendation
-                </Text>
-              </TouchableOpacity>
-              {showRecommendation.churn && (
-                <View style={styles.recommendationBox}>
-                  <Text style={styles.recommendationTitle}>💡 Recommended Action:</Text>
-                  <Text style={styles.recommendationText}>
-                    Send targeted retention campaign with 20% discount offer to at-risk users
-                  </Text>
+        ) : (
+          insights.map((insight) => (
+            <TouchableOpacity 
+              key={insight.id}
+              style={[styles.insightCard, selectedInsight === insight.id && styles.selectedCard]}
+              onPress={() => setSelectedInsight(selectedInsight === insight.id ? null : insight.id)}>
+              <View style={styles.insightHeader}>
+                <Text style={styles.insightIcon}>{getImpactIcon(insight.type)}</Text>
+                <Text style={styles.insightTitle}>{insight.title}</Text>
+                <View style={[styles.impactBadge, {backgroundColor: getImpactColor(insight.impact)}]}>
+                  <Text style={styles.impactText}>{insight.impact?.toUpperCase() || 'INFO'}</Text>
+                </View>
+              </View>
+              <Text style={styles.insightDescription}>
+                {insight.description}
+              </Text>
+              <View style={styles.confidenceContainer}>
+                <Text style={styles.confidenceLabel}>Confidence:</Text>
+                <View style={styles.confidenceBar}>
+                  <View style={[
+                    styles.confidenceFill, 
+                    {
+                      width: `${insight.confidence}%`, 
+                      backgroundColor: insight.confidence > 80 ? '#34C759' : insight.confidence > 60 ? '#FF9500' : '#FF3B30'
+                    }
+                  ]} />
+                </View>
+                <Text style={styles.confidenceText}>{insight.confidence}%</Text>
+              </View>
+              {selectedInsight === insight.id && (
+                <View style={styles.expandedContent}>
+                  <Text style={styles.expandedTitle}>🔍 AI Analysis:</Text>
+                  <Text style={styles.expandedText}>• Powered by machine learning algorithms</Text>
+                  <Text style={styles.expandedText}>• Based on real subscription data patterns</Text>
+                  <Text style={styles.expandedText}>• Updated in real-time</Text>
+                  <TouchableOpacity 
+                    style={styles.actionButton}
+                    onPress={() => toggleRecommendation(insight.id)}>
+                    <Text style={styles.actionButtonText}>
+                      {showRecommendation[insight.id] ? 'Hide' : 'Show'} Recommendation
+                    </Text>
+                  </TouchableOpacity>
+                  {showRecommendation[insight.id] && (
+                    <View style={styles.recommendationBox}>
+                      <Text style={styles.recommendationTitle}>💡 Recommended Action:</Text>
+                      <Text style={styles.recommendationText}>
+                        {insight.recommendation}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               )}
-            </View>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={[styles.insightCard, selectedInsight === 'price' && styles.selectedCard]}
-          onPress={() => setSelectedInsight(selectedInsight === 'price' ? null : 'price')}>
-          <View style={styles.insightHeader}>
-            <Text style={styles.insightIcon}>💰</Text>
-            <Text style={styles.insightTitle}>Price Optimization</Text>
-            <View style={[styles.impactBadge, {backgroundColor: '#FF3B30'}]}>
-              <Text style={styles.impactText}>HIGH</Text>
-            </View>
-          </View>
-          <Text style={styles.insightDescription}>
-            Premium tier could be increased by $2.99 with minimal impact on conversions
-          </Text>
-          <View style={styles.confidenceContainer}>
-            <Text style={styles.confidenceLabel}>Confidence:</Text>
-            <View style={styles.confidenceBar}>
-              <View style={[styles.confidenceFill, {width: '78%', backgroundColor: '#FF9500'}]} />
-            </View>
-            <Text style={styles.confidenceText}>78%</Text>
-          </View>
-          {selectedInsight === 'price' && (
-            <View style={styles.expandedContent}>
-              <Text style={styles.expandedTitle}>📈 Revenue Impact:</Text>
-              <Text style={styles.expandedText}>• Potential MRR increase: +$2,184/month</Text>
-              <Text style={styles.expandedText}>• Estimated churn impact: &lt;2%</Text>
-              <Text style={styles.expandedText}>• ROI timeline: 30-45 days</Text>
-              <TouchableOpacity 
-                style={styles.actionButton}
-                onPress={() => toggleRecommendation('price')}>
-                <Text style={styles.actionButtonText}>
-                  {showRecommendation.price ? 'Hide' : 'Show'} Recommendation
-                </Text>
-              </TouchableOpacity>
-              {showRecommendation.price && (
-                <View style={styles.recommendationBox}>
-                  <Text style={styles.recommendationTitle}>💡 Recommended Action:</Text>
-                  <Text style={styles.recommendationText}>
-                    A/B test price increase for new subscribers starting next month
-                  </Text>
-                </View>
-              )}
-            </View>
-          )}
-        </TouchableOpacity>
+            </TouchableOpacity>
+          ))
+        )}
       </View>
     </ScrollView>
   );
 };
 
-// Metrics Screen Component
 const MetricsScreen = () => {
   const [selectedPeriod, setSelectedPeriod] = useState('30d');
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
@@ -414,6 +492,25 @@ const SettingsScreen = () => {
           <Text style={styles.actionButtonText}>📄 Export Data</Text>
         </TouchableOpacity>
         
+        {/* Account Actions */}
+        <TouchableOpacity 
+          style={styles.logoutButton}
+          onPress={() => Alert.alert(
+            'Sign Out',
+            'Are you sure you want to sign out? You\'ll need to sign in again to access your analytics.',
+            [
+              {text: 'Cancel', style: 'cancel'},
+              {text: 'Sign Out', style: 'destructive', onPress: () => {
+                if ((global as any).handleLogout) {
+                  (global as any).handleLogout();
+                }
+              }}
+            ]
+          )}>
+          <Text style={[styles.actionButtonText, styles.logoutButtonText]}>🚪 Sign Out</Text>
+        </TouchableOpacity>
+
+        {/* Danger Zone Actions */}
         <TouchableOpacity 
           style={[styles.actionButton, styles.dangerButton]}
           onPress={() => Alert.alert(
@@ -439,6 +536,22 @@ const SettingsScreen = () => {
 function App(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState('Dashboard');
 
+  // Initialize RevenueCat SDK when app starts
+  useEffect(() => {
+    const initializeRevenueCat = async () => {
+      try {
+        console.log('🚀 Initializing RevenueCat SDK...');
+        await revenueCatService.initializeSDK();
+        console.log('✅ RevenueCat SDK initialized successfully');
+      } catch (error) {
+        console.warn('⚠️ RevenueCat SDK initialization failed:', error);
+        console.log('📊 App will continue with mock data');
+      }
+    };
+
+    initializeRevenueCat();
+  }, []);
+
   const renderScreen = () => {
     switch (activeTab) {
       case 'Dashboard':
@@ -455,38 +568,40 @@ function App(): React.JSX.Element {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
-      {/* Main Content */}
-      <View style={styles.content}>
-        {renderScreen()}
-      </View>
+    <AuthWrapper>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        
+        {/* Main Content */}
+        <View style={styles.content}>
+          {renderScreen()}
+        </View>
 
-      {/* Bottom Tab Navigation */}
-      <View style={styles.tabContainer}>
-        <TabButton
-          title="📊 Dashboard"
-          isActive={activeTab === 'Dashboard'}
-          onPress={() => setActiveTab('Dashboard')}
-        />
-        <TabButton
-          title="🤖 Insights"
-          isActive={activeTab === 'Insights'}
-          onPress={() => setActiveTab('Insights')}
-        />
-        <TabButton
-          title="📈 Metrics"
-          isActive={activeTab === 'Metrics'}
-          onPress={() => setActiveTab('Metrics')}
-        />
-        <TabButton
-          title="⚙️ Settings"
-          isActive={activeTab === 'Settings'}
-          onPress={() => setActiveTab('Settings')}
-        />
-      </View>
-    </SafeAreaView>
+        {/* Bottom Tab Navigation */}
+        <View style={styles.tabContainer}>
+          <TabButton
+            title="📊 Dashboard"
+            isActive={activeTab === 'Dashboard'}
+            onPress={() => setActiveTab('Dashboard')}
+          />
+          <TabButton
+            title="🤖 Insights"
+            isActive={activeTab === 'Insights'}
+            onPress={() => setActiveTab('Insights')}
+          />
+          <TabButton
+            title="📈 Metrics"
+            isActive={activeTab === 'Metrics'}
+            onPress={() => setActiveTab('Metrics')}
+          />
+          <TabButton
+            title="⚙️ Settings"
+            isActive={activeTab === 'Settings'}
+            onPress={() => setActiveTab('Settings')}
+          />
+        </View>
+      </SafeAreaView>
+    </AuthWrapper>
   );
 }
 
@@ -894,6 +1009,38 @@ const styles = StyleSheet.create({
   actionsContainer: {
     margin: 16,
     gap: 12,
+  },
+  logoutButton: {
+    backgroundColor: '#FF9500',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginVertical: 8,
+  },
+  logoutButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    marginTop: 50,
+  },
+  emptyStateTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#1D1D1F',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  emptyStateText: {
+    fontSize: 16,
+    color: '#6D6D80',
+    textAlign: 'center',
+    lineHeight: 22,
   },
   dangerButton: {
     backgroundColor: '#FF3B30',
